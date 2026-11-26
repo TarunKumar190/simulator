@@ -68,11 +68,12 @@ const NAV_ITEMS: NavItem[] = [
 export default function App() {
   const [auth, setAuth] = useState<{
     token: string;
-    user: { email: string; name: string; role: string };
+    user: { id?: string; email: string; name: string; role: string };
   } | null>(null);
 
   const [state, setState] = useState<PlatformState | null>(null);
   const [streamConnected, setStreamConnected] = useState(false);
+  const [actionError, setActionError] = useState<string>('');
   const [activePage, setActivePage] = useState<PageId>('dashboard');
   const [selectedMachineId, setSelectedMachineId] = useState<string>('M-101');
   const [assistantPendingPrompt, setAssistantPendingPrompt] = useState<string | undefined>(
@@ -91,14 +92,25 @@ export default function App() {
     if (!auth) return;
     let active = true;
 
-    fetch('/api/state')
-      .then((r) => r.json())
-      .then((data: PlatformState) => {
-        if (active) setState(data);
+    fetch('/api/state', {
+      headers: { Authorization: `Bearer ${auth.token}` },
+    })
+      .then(async (r) => {
+        if (r.status === 401) {
+          if (active) {
+            setAuth(null);
+            setState(null);
+          }
+          return null;
+        }
+        return r.json();
+      })
+      .then((data: PlatformState | null) => {
+        if (active && data) setState(data);
       })
       .catch(() => {});
 
-    const es = new EventSource('/api/stream');
+    const es = new EventSource(`/api/stream?token=${encodeURIComponent(auth.token)}`);
     es.onopen = () => {
       if (active) setStreamConnected(true);
     };
@@ -197,6 +209,7 @@ export default function App() {
     return (
       <LoginPage
         onLogin={(user, token) => {
+          setActionError('');
           setAuth({ user, token });
           setActivePage('dashboard');
         }}
@@ -205,7 +218,14 @@ export default function App() {
   }
 
   const refreshState = async () => {
-    const res = await fetch('/api/state');
+    const res = await fetch('/api/state', {
+      headers: { Authorization: `Bearer ${auth.token}` },
+    });
+    if (res.status === 401) {
+      setAuth(null);
+      setState(null);
+      return;
+    }
     if (res.ok) setState(await res.json());
   };
 
@@ -216,6 +236,7 @@ export default function App() {
     }).catch(() => {});
     setAuth(null);
     setState(null);
+    setActionError('');
   };
 
   const navigate = (page: PageId) => {
@@ -243,28 +264,35 @@ export default function App() {
       ? `Machines / ${selectedMachineId}`
       : NAV_ITEMS.find((n) => n.id === activePage)?.label || 'Dashboard';
 
-  // API action helpers
-  const apiPost = async (url: string, body?: unknown) => {
+  // API action helpers with Bearer auth and unified error handling
+  const apiRequest = async (method: 'POST' | 'PATCH' | 'DELETE', url: string, body?: unknown) => {
+    setActionError('');
     const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: body ? JSON.stringify(body) : undefined,
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${auth.token}`,
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
     });
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) {
+      setAuth(null);
+      setState(null);
+      throw new Error('Session expired. Please sign in again.');
+    }
+    if (!res.ok) {
+      const msg = data?.error || `Request failed (${res.status})`;
+      setActionError(msg);
+      throw new Error(msg);
+    }
     await refreshState();
     return data;
   };
 
-  const apiPatch = async (url: string, body: unknown) => {
-    const res = await fetch(url, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const data = await res.json();
-    await refreshState();
-    return data;
-  };
+  const apiPost = (url: string, body?: unknown) => apiRequest('POST', url, body);
+  const apiPatch = (url: string, body: unknown) => apiRequest('PATCH', url, body);
+  const apiDelete = (url: string) => apiRequest('DELETE', url);
 
   return (
     <div className="min-h-screen bg-[#F5F6F4] text-[#172334] flex">
@@ -558,6 +586,19 @@ export default function App() {
 
         {/* Main Viewport */}
         <main className="flex-1 p-4 lg:p-6 max-w-[1440px] w-full mx-auto">
+          {actionError && (
+            <div className="mb-4 px-3.5 py-2.5 rounded border border-[#C74747]/35 bg-[#C74747]/8 text-xs text-[#C74747] flex items-center justify-between gap-3">
+              <span>{actionError}</span>
+              <button
+                type="button"
+                onClick={() => setActionError('')}
+                className="p-0.5 hover:bg-[#C74747]/15 rounded"
+                aria-label="Dismiss error"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
           {!state ? (
             <div className="space-y-4">
               <div className="h-16 bg-white border border-[#D9E0E7] rounded-md animate-pulse" />
@@ -592,12 +633,19 @@ export default function App() {
               {activePage === 'machines' && (
                 <MachinesListPage
                   state={state}
+                  currentUserRole={auth.user.role}
                   onSelectMachine={openMachineDetail}
                   onAddMachine={async (payload) => {
                     await apiPost('/api/machines', payload);
                   }}
                   onUpdateMachine={async (id, payload) => {
                     await apiPatch(`/api/machines/${id}`, payload);
+                  }}
+                  onDeactivateMachine={async (id) => {
+                    await apiPatch(`/api/machines/${id}/deactivate`, { isActive: false });
+                  }}
+                  onDeleteMachine={async (id) => {
+                    await apiDelete(`/api/machines/${id}`);
                   }}
                 />
               )}
@@ -640,12 +688,18 @@ export default function App() {
               )}
 
               {activePage === 'quality' && (
-                <QualityInspectionPage state={state} onInspectComplete={refreshState} />
+                <QualityInspectionPage
+                  state={state}
+                  token={auth.token}
+                  onInspectComplete={refreshState}
+                />
               )}
 
               {activePage === 'assistant' && (
                 <AIAssistantPage
                   state={state}
+                  token={auth.token}
+                  currentUserRole={auth.user.role}
                   initialMachineId={selectedMachineId}
                   initialPrompt={assistantPendingPrompt}
                   onClearInitialPrompt={() => setAssistantPendingPrompt(undefined)}
@@ -660,7 +714,7 @@ export default function App() {
                 <AlertsPage
                   state={state}
                   onAcknowledgeAlert={async (id) => {
-                    await apiPost(`/api/alerts/${id}/acknowledge`, { user: auth.user.name });
+                    await apiPost(`/api/alerts/${id}/acknowledge`);
                   }}
                   onResolveAlert={async (id) => {
                     await apiPost(`/api/alerts/${id}/resolve`);
@@ -672,6 +726,7 @@ export default function App() {
               {activePage === 'maintenance' && (
                 <MaintenancePage
                   state={state}
+                  currentUserRole={auth.user.role}
                   onCreateWorkOrder={async (payload: {
                     machineId: string;
                     issue: string;
@@ -682,20 +737,25 @@ export default function App() {
                   }) => apiPost('/api/work-orders', payload)}
                   onUpdateWorkOrder={async (
                     id: string,
-                    payload: { status?: WorkOrderStatus; assignedEngineer?: string }
+                    payload: {
+                      status?: WorkOrderStatus;
+                      assignedEngineer?: string;
+                      priority?: WorkOrderPriority;
+                      issue?: string;
+                      dueDate?: string;
+                    }
                   ) => {
                     await apiPatch(`/api/work-orders/${id}`, payload);
                   }}
                   onAddNote={async (id, text) => {
-                    await apiPost(`/api/work-orders/${id}/notes`, {
-                      text,
-                      author: auth.user.name,
-                    });
+                    await apiPost(`/api/work-orders/${id}/notes`, { text });
                   }}
                 />
               )}
 
-              {activePage === 'analytics' && <AnalyticsPage state={state} />}
+              {activePage === 'analytics' && (
+                <AnalyticsPage state={state} token={auth.token} />
+              )}
 
               {activePage === 'simulator' && (
                 <SimulatorPage
@@ -740,6 +800,7 @@ export default function App() {
                     email: string;
                     role: UserAccount['role'];
                     department: string;
+                    password?: string;
                   }) => {
                     await apiPost('/api/users', payload);
                   }}

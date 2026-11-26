@@ -80,6 +80,7 @@ export interface Machine {
   position3D: [number, number, number];
   thresholds: MachineThresholds;
   scenario: SimulationScenario;
+  isActive?: boolean;
   sensorHistory: SensorPoint[];
   anomalyHistory: AnomalyRecord[];
 }
@@ -95,6 +96,7 @@ export interface AlertItem {
   severity: AlertSeverity;
   description: string;
   timestamp: string;
+  createdDate?: string;
   status: AlertStatus;
   acknowledgedBy?: string;
   resolvedAt?: string;
@@ -141,6 +143,7 @@ export interface InspectionRecord {
   status: 'Defect Detected' | 'No Defect Detected';
   defectCategory: string;
   confidence: number;
+  analysisEngine?: string;
   summary: string;
   recommendedAction: string;
   detections: DefectDetectionBox[];
@@ -197,11 +200,18 @@ export interface SimulatorState {
   logs: SimulatorLogItem[];
 }
 
+export type UserRole =
+  | 'System Admin'
+  | 'Factory Manager'
+  | 'Maintenance Engineer'
+  | 'Quality Inspector'
+  | 'Operator';
+
 export interface UserAccount {
   id: string;
   name: string;
   email: string;
-  role: 'Factory Manager' | 'Maintenance Engineer' | 'Quality Inspector' | 'System Admin';
+  role: UserRole;
   status: 'Active' | 'Inactive';
   department: string;
   lastActive: string;
@@ -217,12 +227,31 @@ export interface FactoryProfile {
 
 export interface SystemHealthStatus {
   backendApi: 'Operational' | 'Degraded';
-  database: 'Operational' | 'In-Memory Store';
+  database: 'Operational' | 'Degraded' | 'In-Memory Store';
   simulator: 'Running' | 'Paused' | 'Stopped';
   stream: 'Active' | 'Idle';
   predictiveModel: 'Active' | 'Standby';
   visionModel: 'Ready' | 'Unavailable';
   assistantAi: 'Ready' | 'Unavailable';
+}
+
+export interface MlModelMetrics {
+  modelName: string;
+  version: string;
+  trainedAt: string;
+  trainingSamples: number;
+  testSamples: number;
+  accuracy: number;
+  precision: number;
+  recall: number;
+  f1Score: number;
+  rocAuc: number;
+  confusionMatrix: {
+    tp: number;
+    fp: number;
+    tn: number;
+    fn: number;
+  };
 }
 
 export interface PlatformState {
@@ -237,6 +266,7 @@ export interface PlatformState {
   simulator: SimulatorState;
   users: UserAccount[];
   systemHealth: SystemHealthStatus;
+  mlMetrics?: MlModelMetrics;
   aiSettings: {
     anomalyThreshold: number;
     visionConfidenceThreshold: number;

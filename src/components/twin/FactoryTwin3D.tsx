@@ -423,6 +423,8 @@ export function FactoryTwin3D({
   const selectedIdRef = useRef<string>(selectedMachineId);
   const onSelectRef = useRef(onSelectMachine);
   const rigsRef = useRef<Map<string, MachineRig>>(new Map());
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const clickableProxiesRef = useRef<THREE.Object3D[]>([]);
   const cameraPresetRef = useRef<{
     active: boolean;
     pos: THREE.Vector3;
@@ -442,8 +444,33 @@ export function FactoryTwin3D({
   selectedIdRef.current = selectedMachineId;
   onSelectRef.current = onSelectMachine;
 
-  // Update machine rig status colors immediately when props change
+  // Sync machine rigs (add/remove/colors) immediately when machines prop changes
   useEffect(() => {
+    const scene = sceneRef.current;
+    if (scene) {
+      const currentIds = new Set(machines.map((m) => m.id));
+      for (const [existingId, rig] of rigsRef.current.entries()) {
+        if (!currentIds.has(existingId)) {
+          scene.remove(rig.group);
+          rigsRef.current.delete(existingId);
+        }
+      }
+      for (const m of machines) {
+        if (!rigsRef.current.has(m.id)) {
+          const rig = buildCompositeMachine(m);
+          scene.add(rig.group);
+          rigsRef.current.set(m.id, rig);
+        }
+      }
+      const nextProxies: THREE.Object3D[] = [];
+      for (const rig of rigsRef.current.values()) {
+        rig.group.traverse((obj) => {
+          if (obj.userData.machineId) nextProxies.push(obj);
+        });
+      }
+      clickableProxiesRef.current = nextProxies;
+    }
+
     for (const m of machines) {
       const rig = rigsRef.current.get(m.id);
       if (!rig) continue;
