@@ -1,0 +1,6 @@
+{
+  "name": "ForgeTwin",
+  "description": "AI-Powered Industrial Digital Twin & Intelligent Factory Management Platform connecting machine telemetry, predictive maintenance, 3D visualization, computer vision inspection, and an agentic AI operations assistant.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
